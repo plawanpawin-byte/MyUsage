@@ -88,7 +88,7 @@ impl eframe::App for UsageApp {
         let panel_frame = egui::Frame::none()
             .fill(egui::Color32::from_rgb(0x12, 0x12, 0x16))
             .rounding(14.0)
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(0x2a, 0x2a, 0x33)))
+            .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(0x2a, 0x2a, 0x33)))
             .inner_margin(egui::Margin::same(10.0));
 
         egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
