@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Removes MyUsage: deletes %LOCALAPPDATA%\MyUsage, removes it from the user
     PATH, and removes the "run at startup" registry entry if present.

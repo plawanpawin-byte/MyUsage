@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Installs MyUsage: copies myusage.exe into %LOCALAPPDATA%\MyUsage\bin and
     adds that folder to the current user's PATH so the `MyUsage` command
