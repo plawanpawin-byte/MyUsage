@@ -2294,7 +2294,6 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "eframe",
- "raw-window-handle",
  "serde",
  "serde_json",
  "tray-icon",

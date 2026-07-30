@@ -9,7 +9,6 @@ mod icon;
 mod provider;
 mod single_instance;
 mod taskbar;
-mod theme;
 mod tray;
 
 use std::time::Duration;

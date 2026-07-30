@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use crate::provider::{UsageProvider, UsageSnapshot};
-use crate::{autostart, icon, taskbar, theme, tray};
+use crate::{autostart, icon, taskbar, tray};
 
 /// Fixed width of each provider chip and the gap between them, in egui
 /// logical points. Used both to size the docked window and to lay out the
@@ -18,6 +18,15 @@ const PANEL_MARGIN_Y: f32 = 3.0;
 /// Small visual gap kept between the widget's right edge and the
 /// notification-area (clock/tray icons) it docks in front of.
 const NOTIFY_GAP: f32 = 6.0;
+/// Rounded but not pill-shaped: a clearly-square-ish card with softened
+/// corners rather than sharp points or a fully round pill.
+const PANEL_ROUNDING: f32 = 10.0;
+const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0x20, 0x20, 0x22);
+
+/// Clear/translucent white panel background.
+fn panel_fill() -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 210)
+}
 
 pub struct UsageApp {
     providers: Vec<Box<dyn UsageProvider>>,
@@ -27,13 +36,7 @@ pub struct UsageApp {
     tray: tray::TrayHandle,
     last_pos: Option<egui::Pos2>,
     last_size: Option<egui::Vec2>,
-    dark_mode: bool,
     codex_icon: egui::TextureHandle,
-    /// `None` until the first attempt to apply the taskbar's Mica backdrop;
-    /// then whether DWM actually accepted it (fails on pre-Windows-11 or if
-    /// Mica is otherwise unsupported, in which case a flat fallback color
-    /// is drawn instead of leaving the margin transparent).
-    mica_active: Option<bool>,
 }
 
 impl UsageApp {
@@ -43,8 +46,10 @@ impl UsageApp {
         refresh_interval: Duration,
         tray: tray::TrayHandle,
     ) -> Self {
-        let dark_mode = theme::is_dark_mode();
-        cc.egui_ctx.set_visuals(dark_visuals(dark_mode));
+        let mut visuals = egui::Visuals::light();
+        visuals.window_rounding = egui::Rounding::same(PANEL_ROUNDING);
+        visuals.panel_fill = panel_fill();
+        cc.egui_ctx.set_visuals(visuals);
 
         let codex_icon = cc.egui_ctx.load_texture(
             "codex_badge",
@@ -60,9 +65,7 @@ impl UsageApp {
             tray,
             last_pos: None,
             last_size: None,
-            dark_mode,
             codex_icon,
-            mica_active: None,
         };
         app.refresh();
         app
@@ -162,59 +165,6 @@ impl UsageApp {
             self.last_size = Some(size);
         }
     }
-
-    /// Asks DWM to paint the real Windows 11 taskbar material (Mica Alt)
-    /// as this window's backdrop, instead of guessing a flat color that
-    /// can never quite match the taskbar's actual (theme- and
-    /// wallpaper-dependent, translucent) surface. Runs once, as soon as
-    /// the native window handle becomes available.
-    #[cfg(windows)]
-    fn apply_mica_backdrop(&mut self, frame: &eframe::Frame) {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        use windows_sys::Win32::Graphics::Dwm::{
-            DwmSetWindowAttribute, DWMSBT_TABBEDWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
-            DWMWA_USE_IMMERSIVE_DARK_MODE,
-        };
-
-        if self.mica_active.is_some() {
-            return;
-        }
-        let Ok(handle) = frame.window_handle() else {
-            return;
-        };
-        let RawWindowHandle::Win32(win32) = handle.as_raw() else {
-            return;
-        };
-        let hwnd = win32.hwnd.get() as windows_sys::Win32::Foundation::HWND;
-
-        // Mica renders a light or dark variant depending on this flag —
-        // it does NOT follow the OS setting automatically for a plain
-        // Win32 window, so without this it can default to dark regardless
-        // of the taskbar's actual (possibly light) theme.
-        let use_dark: i32 = self.dark_mode as i32;
-        unsafe {
-            DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
-                &use_dark as *const _ as *const core::ffi::c_void,
-                std::mem::size_of_val(&use_dark) as u32,
-            );
-        }
-
-        let backdrop = DWMSBT_TABBEDWINDOW;
-        let hr = unsafe {
-            DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_SYSTEMBACKDROP_TYPE as u32,
-                &backdrop as *const _ as *const core::ffi::c_void,
-                std::mem::size_of_val(&backdrop) as u32,
-            )
-        };
-        self.mica_active = Some(hr >= 0);
-    }
-
-    #[cfg(not(windows))]
-    fn apply_mica_backdrop(&mut self, _frame: &eframe::Frame) {}
 }
 
 impl eframe::App for UsageApp {
@@ -222,8 +172,7 @@ impl eframe::App for UsageApp {
         egui::Rgba::from_rgba_unmultiplied(0.0, 0.0, 0.0, 0.0).to_array()
     }
 
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.apply_mica_backdrop(frame);
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_tray_events(ctx);
         self.dock_to_taskbar(ctx);
 
@@ -238,26 +187,17 @@ impl eframe::App for UsageApp {
             self.refresh();
         }
 
-        let colors = Palette::for_mode(self.dark_mode);
-
-        // When DWM accepted the Mica backdrop, leave the margin around the
-        // chips transparent so the real taskbar material shows through
-        // exactly as-is. Otherwise (pre-Windows-11, or DWM refused it),
-        // fall back to a flat approximate color instead of a transparent
-        // hole showing the desktop through.
-        let mut panel_frame = egui::Frame::none()
-            .rounding(6.0)
+        let panel_frame = egui::Frame::none()
+            .rounding(PANEL_ROUNDING)
+            .fill(panel_fill())
             .inner_margin(egui::Margin::symmetric(PANEL_MARGIN_X, PANEL_MARGIN_Y));
-        if self.mica_active != Some(true) {
-            panel_frame = panel_frame.fill(colors.panel_fill);
-        }
 
         egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
             let avail_h = ui.available_height();
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = CHIP_GAP;
                 for snap in &self.snapshots {
-                    draw_chip(ui, snap, egui::vec2(CHIP_W, avail_h), &self.codex_icon, &colors);
+                    draw_chip(ui, snap, egui::vec2(CHIP_W, avail_h), &self.codex_icon);
                 }
             });
         });
@@ -266,38 +206,6 @@ impl eframe::App for UsageApp {
         // even with no input.
         ctx.request_repaint_after(Duration::from_millis(500));
     }
-}
-
-/// Neutral colors matched to Windows' own dark/light taskbar tone, instead
-/// of a fixed accent-tinted palette that would stand out as an obviously
-/// separate floating box rather than blending into the taskbar.
-struct Palette {
-    panel_fill: egui::Color32,
-    text: egui::Color32,
-}
-
-impl Palette {
-    fn for_mode(dark: bool) -> Self {
-        if dark {
-            Self {
-                panel_fill: egui::Color32::from_rgb(0x20, 0x20, 0x20),
-                text: egui::Color32::from_rgb(0xe4, 0xe4, 0xe6),
-            }
-        } else {
-            Self {
-                panel_fill: egui::Color32::from_rgb(0xf3, 0xf3, 0xf3),
-                text: egui::Color32::from_rgb(0x20, 0x20, 0x22),
-            }
-        }
-    }
-}
-
-fn dark_visuals(dark: bool) -> egui::Visuals {
-    let colors = Palette::for_mode(dark);
-    let mut visuals = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
-    visuals.window_rounding = egui::Rounding::same(6.0);
-    visuals.panel_fill = colors.panel_fill;
-    visuals
 }
 
 fn left_color(percent_left: f32) -> egui::Color32 {
@@ -345,13 +253,7 @@ fn chip_tooltip(snap: &UsageSnapshot) -> String {
 /// on one line, a thin progress bar below it. Full detail (countdown, exact
 /// reset time, notes) lives in the hover tooltip since the docked strip is
 /// only as tall as the taskbar itself.
-fn draw_chip(
-    ui: &mut egui::Ui,
-    snap: &UsageSnapshot,
-    size: egui::Vec2,
-    icon: &egui::TextureHandle,
-    colors: &Palette,
-) {
+fn draw_chip(ui: &mut egui::Ui, snap: &UsageSnapshot, size: egui::Vec2, icon: &egui::TextureHandle) {
     let tooltip = chip_tooltip(snap);
     let response = ui
         .allocate_ui(size, |ui| {
@@ -361,10 +263,7 @@ fn draw_chip(
             // the whole strip's width math against the taskbar dock.
             ui.set_clip_rect(ui.max_rect());
             // No separate fill/rounding here: the outer panel already owns
-            // the one background (Mica or fallback) for the whole widget.
-            // A second opaque pill on top of it would cover almost the
-            // entire window, leaving only a sliver of the real taskbar
-            // material visible — defeating the point of blending in.
+            // the one (translucent white) background for the whole widget.
             egui::Frame::none()
                 .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                 .show(ui, |ui| {
@@ -379,7 +278,7 @@ fn draw_chip(
                             ui.add_space(3.0);
                             ui.label(
                                 egui::RichText::new(&snap.display_name)
-                                    .color(colors.text)
+                                    .color(TEXT_COLOR)
                                     .size(11.0),
                             );
                             ui.add_space(6.0);
