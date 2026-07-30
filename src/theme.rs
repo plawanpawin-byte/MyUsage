@@ -10,11 +10,21 @@ pub fn is_dark_mode() -> bool {
     use winreg::enums::HKEY_CURRENT_USER;
     use winreg::RegKey;
 
-    RegKey::predef(HKEY_CURRENT_USER)
+    let Ok(key) = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
-        .and_then(|key| key.get_value::<u32, _>("SystemUsesLightTheme"))
+    else {
+        return false; // Key only exists once a user has touched theme
+                       // settings at all — Windows' own out-of-box default
+                       // is light, so that's the safer unknown-case guess.
+    };
+
+    // `SystemUsesLightTheme` is the taskbar/Start color; it can be absent
+    // even when the key exists (e.g. never explicitly toggled), so fall
+    // back to the general app theme rather than guessing dark outright.
+    key.get_value::<u32, _>("SystemUsesLightTheme")
+        .or_else(|_| key.get_value::<u32, _>("AppsUseLightTheme"))
         .map(|light| light == 0)
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
 #[cfg(not(windows))]

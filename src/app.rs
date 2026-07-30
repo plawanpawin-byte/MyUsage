@@ -8,9 +8,8 @@ use crate::{autostart, icon, taskbar, theme, tray};
 /// Fixed width of each provider chip and the gap between them, in egui
 /// logical points. Used both to size the docked window and to lay out the
 /// chips inside it, so the two must stay in sync.
-const CHIP_W: f32 = 118.0;
+const CHIP_W: f32 = 145.0;
 const CHIP_GAP: f32 = 4.0;
-const HIDE_BTN_W: f32 = 22.0;
 /// Horizontal/vertical inner margin of the outer panel frame — must match
 /// `panel_frame`'s `inner_margin` below since the docked window size is
 /// computed from content width alone and needs to add this back in.
@@ -30,6 +29,11 @@ pub struct UsageApp {
     last_size: Option<egui::Vec2>,
     dark_mode: bool,
     codex_icon: egui::TextureHandle,
+    /// `None` until the first attempt to apply the taskbar's Mica backdrop;
+    /// then whether DWM actually accepted it (fails on pre-Windows-11 or if
+    /// Mica is otherwise unsupported, in which case a flat fallback color
+    /// is drawn instead of leaving the margin transparent).
+    mica_active: Option<bool>,
 }
 
 impl UsageApp {
@@ -58,6 +62,7 @@ impl UsageApp {
             last_size: None,
             dark_mode,
             codex_icon,
+            mica_active: None,
         };
         app.refresh();
         app
@@ -117,7 +122,7 @@ impl UsageApp {
 
         let notify_px = taskbar::notify_area_rect();
         let n = self.snapshots.len().max(1) as f32;
-        let content_w = CHIP_W * n + CHIP_GAP * n + HIDE_BTN_W + PANEL_MARGIN_X * 2.0;
+        let content_w = CHIP_W * n + CHIP_GAP * (n - 1.0).max(0.0) + PANEL_MARGIN_X * 2.0;
 
         let (pos, size) = if taskbar_px.width() >= taskbar_px.height() {
             // Common case: horizontal taskbar docked to the bottom screen
@@ -141,7 +146,7 @@ impl UsageApp {
             // stack the same strip above the notification area instead.
             let notify_top = notify_px.map(|r| to_pt(r.top)).unwrap_or(tb_bottom);
             let bottom_edge = (notify_top - NOTIFY_GAP).min(tb_bottom);
-            let content_h = CHIP_W.min(48.0) * n + CHIP_GAP * n + HIDE_BTN_W + PANEL_MARGIN_Y * 2.0;
+            let content_h = CHIP_W.min(48.0) * n + CHIP_GAP * (n - 1.0).max(0.0) + PANEL_MARGIN_Y * 2.0;
             let top_edge = (bottom_edge - content_h).max(tb_top);
             let height = (bottom_edge - top_edge).max(60.0);
             let width = tb_w.max(60.0);
@@ -157,6 +162,59 @@ impl UsageApp {
             self.last_size = Some(size);
         }
     }
+
+    /// Asks DWM to paint the real Windows 11 taskbar material (Mica Alt)
+    /// as this window's backdrop, instead of guessing a flat color that
+    /// can never quite match the taskbar's actual (theme- and
+    /// wallpaper-dependent, translucent) surface. Runs once, as soon as
+    /// the native window handle becomes available.
+    #[cfg(windows)]
+    fn apply_mica_backdrop(&mut self, frame: &eframe::Frame) {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use windows_sys::Win32::Graphics::Dwm::{
+            DwmSetWindowAttribute, DWMSBT_TABBEDWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+        };
+
+        if self.mica_active.is_some() {
+            return;
+        }
+        let Ok(handle) = frame.window_handle() else {
+            return;
+        };
+        let RawWindowHandle::Win32(win32) = handle.as_raw() else {
+            return;
+        };
+        let hwnd = win32.hwnd.get() as windows_sys::Win32::Foundation::HWND;
+
+        // Mica renders a light or dark variant depending on this flag —
+        // it does NOT follow the OS setting automatically for a plain
+        // Win32 window, so without this it can default to dark regardless
+        // of the taskbar's actual (possibly light) theme.
+        let use_dark: i32 = self.dark_mode as i32;
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+                &use_dark as *const _ as *const core::ffi::c_void,
+                std::mem::size_of_val(&use_dark) as u32,
+            );
+        }
+
+        let backdrop = DWMSBT_TABBEDWINDOW;
+        let hr = unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_SYSTEMBACKDROP_TYPE as u32,
+                &backdrop as *const _ as *const core::ffi::c_void,
+                std::mem::size_of_val(&backdrop) as u32,
+            )
+        };
+        self.mica_active = Some(hr >= 0);
+    }
+
+    #[cfg(not(windows))]
+    fn apply_mica_backdrop(&mut self, _frame: &eframe::Frame) {}
 }
 
 impl eframe::App for UsageApp {
@@ -164,7 +222,8 @@ impl eframe::App for UsageApp {
         egui::Rgba::from_rgba_unmultiplied(0.0, 0.0, 0.0, 0.0).to_array()
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.apply_mica_backdrop(frame);
         self.handle_tray_events(ctx);
         self.dock_to_taskbar(ctx);
 
@@ -181,10 +240,15 @@ impl eframe::App for UsageApp {
 
         let colors = Palette::for_mode(self.dark_mode);
 
-        let panel_frame = egui::Frame::none()
-            .fill(colors.panel_fill)
-            .rounding(6.0)
-            .inner_margin(egui::Margin::symmetric(PANEL_MARGIN_X, PANEL_MARGIN_Y));
+        // When DWM accepted the Mica backdrop, leave the margin around the
+        // chips transparent so the real taskbar material shows through
+        // exactly as-is. Otherwise (pre-Windows-11, or DWM refused it),
+        // fall back to a flat approximate color instead of a transparent
+        // hole showing the desktop through.
+        let mut panel_frame = egui::Frame::none().inner_margin(egui::Margin::symmetric(PANEL_MARGIN_X, PANEL_MARGIN_Y));
+        if self.mica_active != Some(true) {
+            panel_frame = panel_frame.fill(colors.panel_fill);
+        }
 
         egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
             let avail_h = ui.available_height();
@@ -193,18 +257,6 @@ impl eframe::App for UsageApp {
                 for snap in &self.snapshots {
                     draw_chip(ui, snap, egui::vec2(CHIP_W, avail_h), &self.codex_icon, &colors);
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(egui::RichText::new("×").color(colors.text).size(13.0))
-                                .frame(false),
-                        )
-                        .on_hover_text("ซ่อนไปที่ System Tray")
-                        .clicked()
-                    {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-                    }
-                });
             });
         });
 
