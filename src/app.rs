@@ -245,7 +245,9 @@ impl eframe::App for UsageApp {
         // exactly as-is. Otherwise (pre-Windows-11, or DWM refused it),
         // fall back to a flat approximate color instead of a transparent
         // hole showing the desktop through.
-        let mut panel_frame = egui::Frame::none().inner_margin(egui::Margin::symmetric(PANEL_MARGIN_X, PANEL_MARGIN_Y));
+        let mut panel_frame = egui::Frame::none()
+            .rounding(6.0)
+            .inner_margin(egui::Margin::symmetric(PANEL_MARGIN_X, PANEL_MARGIN_Y));
         if self.mica_active != Some(true) {
             panel_frame = panel_frame.fill(colors.panel_fill);
         }
@@ -271,7 +273,6 @@ impl eframe::App for UsageApp {
 /// separate floating box rather than blending into the taskbar.
 struct Palette {
     panel_fill: egui::Color32,
-    chip_fill: egui::Color32,
     text: egui::Color32,
 }
 
@@ -280,13 +281,11 @@ impl Palette {
         if dark {
             Self {
                 panel_fill: egui::Color32::from_rgb(0x20, 0x20, 0x20),
-                chip_fill: egui::Color32::from_rgb(0x2c, 0x2c, 0x2c),
                 text: egui::Color32::from_rgb(0xe4, 0xe4, 0xe6),
             }
         } else {
             Self {
                 panel_fill: egui::Color32::from_rgb(0xf3, 0xf3, 0xf3),
-                chip_fill: egui::Color32::from_rgb(0xe6, 0xe6, 0xe6),
                 text: egui::Color32::from_rgb(0x20, 0x20, 0x22),
             }
         }
@@ -361,13 +360,20 @@ fn draw_chip(
             // letting it bleed into the next chip, which would throw off
             // the whole strip's width math against the taskbar dock.
             ui.set_clip_rect(ui.max_rect());
+            // No separate fill/rounding here: the outer panel already owns
+            // the one background (Mica or fallback) for the whole widget.
+            // A second opaque pill on top of it would cover almost the
+            // entire window, leaving only a sliver of the real taskbar
+            // material visible — defeating the point of blending in.
             egui::Frame::none()
-                .fill(colors.chip_fill)
-                .rounding(4.0)
                 .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                 .show(ui, |ui| {
                     ui.set_width(size.x - 16.0);
                     ui.vertical(|ui| {
+                        // Plain left-to-right sequence rather than a nested
+                        // right-to-left layout for the percent label — that
+                        // repeatedly measured/clipped wider than the fixed
+                        // chip width actually allowed, cutting the "%" off.
                         ui.horizontal(|ui| {
                             ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(14.0, 14.0)));
                             ui.add_space(3.0);
@@ -376,15 +382,14 @@ fn draw_chip(
                                     .color(colors.text)
                                     .size(11.0),
                             );
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let left = snap.percent_left();
-                                ui.label(
-                                    egui::RichText::new(format!("{left:.0}%"))
-                                        .color(left_color(left))
-                                        .strong()
-                                        .size(13.0),
-                                );
-                            });
+                            ui.add_space(6.0);
+                            let left = snap.percent_left();
+                            ui.label(
+                                egui::RichText::new(format!("{left:.0}%"))
+                                    .color(left_color(left))
+                                    .strong()
+                                    .size(13.0),
+                            );
                         });
 
                         let left_frac = snap.percent_left() / 100.0;

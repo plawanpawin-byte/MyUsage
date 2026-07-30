@@ -4,6 +4,7 @@ mod app;
 mod autostart;
 mod cli;
 mod config;
+mod crash_log;
 mod icon;
 mod provider;
 mod single_instance;
@@ -41,6 +42,7 @@ fn build_providers() -> Vec<Box<dyn UsageProvider>> {
 }
 
 fn main() -> eframe::Result<()> {
+    crash_log::install();
     match cli::parse_args() {
         cli::Mode::Help => {
             attach_parent_console();
