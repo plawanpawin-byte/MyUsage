@@ -8,13 +8,13 @@ use crate::{autostart, icon, taskbar, tray};
 /// Fixed width of each provider chip and the gap between them, in egui
 /// logical points. Used both to size the docked window and to lay out the
 /// chips inside it, so the two must stay in sync.
-const CHIP_W: f32 = 145.0;
+const CHIP_W: f32 = 100.0;
 const CHIP_GAP: f32 = 4.0;
 /// Horizontal/vertical inner margin of the outer panel frame — must match
 /// `panel_frame`'s `inner_margin` below since the docked window size is
 /// computed from content width alone and needs to add this back in.
-const PANEL_MARGIN_X: f32 = 6.0;
-const PANEL_MARGIN_Y: f32 = 3.0;
+const PANEL_MARGIN_X: f32 = 4.0;
+const PANEL_MARGIN_Y: f32 = 2.0;
 /// Small visual gap kept between the widget's right edge and the
 /// notification-area (clock/tray icons) it docks in front of.
 const NOTIFY_GAP: f32 = 6.0;
@@ -265,29 +265,29 @@ fn draw_chip(ui: &mut egui::Ui, snap: &UsageSnapshot, size: egui::Vec2, icon: &e
             // No separate fill/rounding here: the outer panel already owns
             // the one (translucent white) background for the whole widget.
             egui::Frame::none()
-                .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                .inner_margin(egui::Margin::symmetric(6.0, 3.0))
                 .show(ui, |ui| {
-                    ui.set_width(size.x - 16.0);
+                    ui.set_width(size.x - 12.0);
                     ui.vertical(|ui| {
                         // Plain left-to-right sequence rather than a nested
                         // right-to-left layout for the percent label — that
                         // repeatedly measured/clipped wider than the fixed
                         // chip width actually allowed, cutting the "%" off.
                         ui.horizontal(|ui| {
-                            ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(14.0, 14.0)));
-                            ui.add_space(3.0);
+                            ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(12.0, 12.0)));
+                            ui.add_space(2.0);
                             ui.label(
                                 egui::RichText::new(&snap.display_name)
                                     .color(TEXT_COLOR)
-                                    .size(11.0),
+                                    .size(10.0),
                             );
-                            ui.add_space(6.0);
+                            ui.add_space(4.0);
                             let left = snap.percent_left();
                             ui.label(
                                 egui::RichText::new(format!("{left:.0}%"))
                                     .color(left_color(left))
                                     .strong()
-                                    .size(13.0),
+                                    .size(12.0),
                             );
                         });
 
@@ -295,8 +295,8 @@ fn draw_chip(ui: &mut egui::Ui, snap: &UsageSnapshot, size: egui::Vec2, icon: &e
                         ui.add(
                             egui::ProgressBar::new(left_frac)
                                 .fill(left_color(snap.percent_left()))
-                                .desired_height(4.0)
-                                .rounding(2.0),
+                                .desired_height(3.0)
+                                .rounding(1.5),
                         );
                     });
                 });
