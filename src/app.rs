@@ -120,15 +120,22 @@ impl UsageApp {
         let content_w = CHIP_W * n + CHIP_GAP * n + HIDE_BTN_W + PANEL_MARGIN_X * 2.0;
 
         let (pos, size) = if taskbar_px.width() >= taskbar_px.height() {
-            // Common case: horizontal taskbar docked to the top or bottom
-            // screen edge. Dock the strip flush against its left edge of
-            // the notification area, matching the taskbar's full height.
+            // Common case: horizontal taskbar docked to the bottom screen
+            // edge. Dock the strip flush against its left edge of the
+            // notification area, matching the taskbar's full height.
+            //
+            // Anchored from the *bottom*, not the top: on Windows 11,
+            // Shell_TrayWnd's reported rect can include a few pixels of
+            // invisible padding above the visually painted bar, so pinning
+            // to `tb_top` left a visible gap between the widget and the
+            // taskbar. The bottom edge is always the true screen edge for a
+            // bottom-docked taskbar, so it's the reliable anchor.
             let notify_left = notify_px.map(|r| to_pt(r.left)).unwrap_or(tb_right);
             let right_edge = (notify_left - NOTIFY_GAP).min(tb_right);
             let left_edge = (right_edge - content_w).max(tb_left);
             let width = (right_edge - left_edge).max(60.0);
             let height = tb_h.max(28.0);
-            (egui::pos2(left_edge, tb_top), egui::vec2(width, height))
+            (egui::pos2(left_edge, tb_bottom - height), egui::vec2(width, height))
         } else {
             // Vertical taskbar (docked to the left/right screen edge):
             // stack the same strip above the notification area instead.
