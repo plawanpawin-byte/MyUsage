@@ -3,12 +3,12 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use crate::provider::{UsageProvider, UsageSnapshot};
-use crate::{autostart, taskbar, tray};
+use crate::{autostart, icon, taskbar, theme, tray};
 
 /// Fixed width of each provider chip and the gap between them, in egui
 /// logical points. Used both to size the docked window and to lay out the
 /// chips inside it, so the two must stay in sync.
-const CHIP_W: f32 = 152.0;
+const CHIP_W: f32 = 118.0;
 const CHIP_GAP: f32 = 4.0;
 const HIDE_BTN_W: f32 = 22.0;
 /// Horizontal/vertical inner margin of the outer panel frame — must match
@@ -28,6 +28,8 @@ pub struct UsageApp {
     tray: tray::TrayHandle,
     last_pos: Option<egui::Pos2>,
     last_size: Option<egui::Vec2>,
+    dark_mode: bool,
+    codex_icon: egui::TextureHandle,
 }
 
 impl UsageApp {
@@ -37,7 +39,14 @@ impl UsageApp {
         refresh_interval: Duration,
         tray: tray::TrayHandle,
     ) -> Self {
-        cc.egui_ctx.set_visuals(dark_visuals());
+        let dark_mode = theme::is_dark_mode();
+        cc.egui_ctx.set_visuals(dark_visuals(dark_mode));
+
+        let codex_icon = cc.egui_ctx.load_texture(
+            "codex_badge",
+            egui::ColorImage::from_rgba_unmultiplied([64, 64], &icon::codex_badge_rgba(64)),
+            egui::TextureOptions::LINEAR,
+        );
 
         let mut app = Self {
             providers,
@@ -47,6 +56,8 @@ impl UsageApp {
             tray,
             last_pos: None,
             last_size: None,
+            dark_mode,
+            codex_icon,
         };
         app.refresh();
         app
@@ -161,10 +172,11 @@ impl eframe::App for UsageApp {
             self.refresh();
         }
 
+        let colors = Palette::for_mode(self.dark_mode);
+
         let panel_frame = egui::Frame::none()
-            .fill(egui::Color32::from_rgb(0x18, 0x18, 0x1c))
+            .fill(colors.panel_fill)
             .rounding(6.0)
-            .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(0x2a, 0x2a, 0x33)))
             .inner_margin(egui::Margin::symmetric(PANEL_MARGIN_X, PANEL_MARGIN_Y));
 
         egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
@@ -172,11 +184,14 @@ impl eframe::App for UsageApp {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = CHIP_GAP;
                 for snap in &self.snapshots {
-                    draw_chip(ui, snap, egui::vec2(CHIP_W, avail_h));
+                    draw_chip(ui, snap, egui::vec2(CHIP_W, avail_h), &self.codex_icon, &colors);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .add(egui::Button::new(egui::RichText::new("×").size(13.0)).frame(false))
+                        .add(
+                            egui::Button::new(egui::RichText::new("×").color(colors.text).size(13.0))
+                                .frame(false),
+                        )
                         .on_hover_text("ซ่อนไปที่ System Tray")
                         .clicked()
                     {
@@ -192,10 +207,38 @@ impl eframe::App for UsageApp {
     }
 }
 
-fn dark_visuals() -> egui::Visuals {
-    let mut visuals = egui::Visuals::dark();
+/// Neutral colors matched to Windows' own dark/light taskbar tone, instead
+/// of a fixed accent-tinted palette that would stand out as an obviously
+/// separate floating box rather than blending into the taskbar.
+struct Palette {
+    panel_fill: egui::Color32,
+    chip_fill: egui::Color32,
+    text: egui::Color32,
+}
+
+impl Palette {
+    fn for_mode(dark: bool) -> Self {
+        if dark {
+            Self {
+                panel_fill: egui::Color32::from_rgb(0x20, 0x20, 0x20),
+                chip_fill: egui::Color32::from_rgb(0x2c, 0x2c, 0x2c),
+                text: egui::Color32::from_rgb(0xe4, 0xe4, 0xe6),
+            }
+        } else {
+            Self {
+                panel_fill: egui::Color32::from_rgb(0xf3, 0xf3, 0xf3),
+                chip_fill: egui::Color32::from_rgb(0xe6, 0xe6, 0xe6),
+                text: egui::Color32::from_rgb(0x20, 0x20, 0x22),
+            }
+        }
+    }
+}
+
+fn dark_visuals(dark: bool) -> egui::Visuals {
+    let colors = Palette::for_mode(dark);
+    let mut visuals = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
     visuals.window_rounding = egui::Rounding::same(6.0);
-    visuals.panel_fill = egui::Color32::from_rgb(0x18, 0x18, 0x1c);
+    visuals.panel_fill = colors.panel_fill;
     visuals
 }
 
@@ -240,11 +283,17 @@ fn chip_tooltip(snap: &UsageSnapshot) -> String {
     text
 }
 
-/// A single compact provider card: a colored dot + short name + percent on
-/// one line, a thin progress bar below it. Full detail (countdown, exact
+/// A single compact provider card: the Codex badge + short name + percent
+/// on one line, a thin progress bar below it. Full detail (countdown, exact
 /// reset time, notes) lives in the hover tooltip since the docked strip is
 /// only as tall as the taskbar itself.
-fn draw_chip(ui: &mut egui::Ui, snap: &UsageSnapshot, size: egui::Vec2) {
+fn draw_chip(
+    ui: &mut egui::Ui,
+    snap: &UsageSnapshot,
+    size: egui::Vec2,
+    icon: &egui::TextureHandle,
+    colors: &Palette,
+) {
     let tooltip = chip_tooltip(snap);
     let response = ui
         .allocate_ui(size, |ui| {
@@ -254,24 +303,18 @@ fn draw_chip(ui: &mut egui::Ui, snap: &UsageSnapshot, size: egui::Vec2) {
             // the whole strip's width math against the taskbar dock.
             ui.set_clip_rect(ui.max_rect());
             egui::Frame::none()
-                .fill(egui::Color32::from_rgb(0x22, 0x22, 0x29))
+                .fill(colors.chip_fill)
                 .rounding(4.0)
                 .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                 .show(ui, |ui| {
                     ui.set_width(size.x - 16.0);
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
-                            let (rect, _) =
-                                ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                            ui.painter().circle_filled(
-                                rect.center(),
-                                4.0,
-                                egui::Color32::from_rgb(snap.color[0], snap.color[1], snap.color[2]),
-                            );
-                            ui.add_space(2.0);
+                            ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(14.0, 14.0)));
+                            ui.add_space(3.0);
                             ui.label(
                                 egui::RichText::new(&snap.display_name)
-                                    .color(egui::Color32::from_rgb(0xcf, 0xcf, 0xd6))
+                                    .color(colors.text)
                                     .size(11.0),
                             );
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

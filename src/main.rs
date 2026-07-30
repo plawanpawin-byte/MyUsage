@@ -8,6 +8,7 @@ mod icon;
 mod provider;
 mod single_instance;
 mod taskbar;
+mod theme;
 mod tray;
 
 use std::time::Duration;
@@ -16,26 +17,10 @@ use provider::local_cli::LocalCliProvider;
 use provider::mock::MockProvider;
 use provider::UsageProvider;
 
-const ACCENT_CLAUDE: [u8; 3] = [0xd9, 0x77, 0x57];
 const ACCENT_PLUS: [u8; 3] = [0x4f, 0x8c, 0xff];
 
 fn build_providers() -> Vec<Box<dyn UsageProvider>> {
     let home = dirs::home_dir().unwrap_or_default();
-
-    let claude = LocalCliProvider::new(
-        "claude_pro",
-        "Claude Pro",
-        ACCENT_CLAUDE,
-        home.join(".claude"),
-        MockProvider::new(
-            "claude_pro",
-            "Claude Pro",
-            ACCENT_CLAUDE,
-            chrono::Duration::hours(5),
-            18.0,
-            0.25,
-        ),
-    );
 
     let plus = LocalCliProvider::new(
         "codex_plus",
@@ -52,7 +37,7 @@ fn build_providers() -> Vec<Box<dyn UsageProvider>> {
         ),
     );
 
-    vec![Box::new(claude), Box::new(plus)]
+    vec![Box::new(plus)]
 }
 
 fn main() -> eframe::Result<()> {
@@ -97,9 +82,9 @@ fn run_gui(start_hidden: bool) -> eframe::Result<()> {
     }
 
     let cfg = config::load();
-    let icon_rgba = icon::generate_rgba(64, ACCENT_PLUS);
+    let icon_rgba = icon::codex_badge_rgba(64);
 
-    let tray_handle = tray::build(icon::generate_rgba(32, ACCENT_PLUS), 32)
+    let tray_handle = tray::build(icon::codex_badge_rgba(32), 32)
         .expect("ไม่สามารถสร้าง System Tray icon ได้");
 
     // Initial guess only — app.rs re-measures the real taskbar every frame
