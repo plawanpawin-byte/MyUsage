@@ -3,12 +3,12 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use crate::provider::{UsageProvider, UsageSnapshot};
-use crate::{autostart, icon, taskbar, tray};
+use crate::{autostart, crash_log, icon, taskbar, tray};
 
 /// Fixed width of each provider chip and the gap between them, in egui
 /// logical points. Used both to size the docked window and to lay out the
 /// chips inside it, so the two must stay in sync.
-const CHIP_W: f32 = 100.0;
+const CHIP_W: f32 = 62.0;
 const CHIP_GAP: f32 = 4.0;
 /// Horizontal/vertical inner margin of the outer panel frame — must match
 /// `panel_frame`'s `inner_margin` below since the docked window size is
@@ -21,7 +21,6 @@ const NOTIFY_GAP: f32 = 6.0;
 /// Rounded but not pill-shaped: a clearly-square-ish card with softened
 /// corners rather than sharp points or a fully round pill.
 const PANEL_ROUNDING: f32 = 10.0;
-const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0x20, 0x20, 0x22);
 
 /// Clear/translucent white panel background.
 fn panel_fill() -> egui::Color32 {
@@ -176,12 +175,22 @@ impl eframe::App for UsageApp {
         self.handle_tray_events(ctx);
         self.dock_to_taskbar(ctx);
 
-        // Closing the (decoration-less) window hides it to the tray instead
-        // of quitting — the tray "ออกจากโปรแกรม" item is the real exit.
+        // The widget is meant to stay permanently docked on the taskbar, so
+        // a close request (Alt+F4 or similar) is ignored rather than hiding
+        // it — the tray "ออกจากโปรแกรม" item is the only real exit. Logged
+        // since this is one of the few ways the window could otherwise
+        // disappear without the user asking it to.
         if ctx.input(|i| i.viewport().close_requested()) {
+            crash_log::log_event("close_requested (ignored, staying visible)");
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
+
+        // Defensively re-assert visible + always-on-top every frame. Cheap
+        // when already true, and a safety net against the widget being
+        // hidden or dropped behind another window by anything other than
+        // the close-requested path already handled above.
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
 
         if self.last_refresh.elapsed() >= self.refresh_interval {
             self.refresh();
@@ -269,19 +278,13 @@ fn draw_chip(ui: &mut egui::Ui, snap: &UsageSnapshot, size: egui::Vec2, icon: &e
                 .show(ui, |ui| {
                     ui.set_width(size.x - 12.0);
                     ui.vertical(|ui| {
-                        // Plain left-to-right sequence rather than a nested
-                        // right-to-left layout for the percent label — that
-                        // repeatedly measured/clipped wider than the fixed
-                        // chip width actually allowed, cutting the "%" off.
+                        // Just the icon + percent, no provider name label —
+                        // the icon already identifies which provider this
+                        // is (full name/details are in the hover tooltip),
+                        // and dropping it lets the chip run much narrower.
                         ui.horizontal(|ui| {
                             ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(12.0, 12.0)));
-                            ui.add_space(2.0);
-                            ui.label(
-                                egui::RichText::new(&snap.display_name)
-                                    .color(TEXT_COLOR)
-                                    .size(10.0),
-                            );
-                            ui.add_space(4.0);
+                            ui.add_space(3.0);
                             let left = snap.percent_left();
                             ui.label(
                                 egui::RichText::new(format!("{left:.0}%"))
