@@ -7,6 +7,7 @@ mod config;
 mod icon;
 mod provider;
 mod single_instance;
+mod taskbar;
 mod tray;
 
 use std::time::Duration;
@@ -101,13 +102,16 @@ fn run_gui(start_hidden: bool) -> eframe::Result<()> {
     let tray_handle = tray::build(icon::generate_rgba(32, ACCENT_PLUS), 32)
         .expect("ไม่สามารถสร้าง System Tray icon ได้");
 
+    // Initial guess only — app.rs re-measures the real taskbar every frame
+    // and drives the actual position/size via ViewportCommand.
     let viewport = eframe::egui::ViewportBuilder::default()
-        .with_inner_size([300.0, 320.0])
-        .with_min_inner_size([260.0, 200.0])
+        .with_inner_size([360.0, 40.0])
+        .with_min_inner_size([120.0, 24.0])
         .with_decorations(false)
         .with_transparent(true)
         .with_always_on_top()
-        .with_resizable(true)
+        .with_taskbar(false)
+        .with_resizable(false)
         .with_visible(!start_hidden)
         .with_icon(eframe::egui::IconData {
             rgba: icon_rgba,
